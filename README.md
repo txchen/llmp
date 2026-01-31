@@ -4,6 +4,8 @@ Lightweight LAN proxy for OpenAI and Anthropic with a single local token.
 
 ## Run locally
 
+Copy `.env.example` to `.env` and fill in values, then export them (or load with your preferred env loader), or export directly:
+
 ```bash
 export OPENAI_BASE_URL=https://api.openai.com
 export OPENAI_API_KEY=...
@@ -12,7 +14,7 @@ export ANTHROPIC_API_KEY=...
 export PROXY_TOKEN=local-token
 export PORT=33000
 
-bun run src/server.ts
+bun run dev
 ```
 
 ## Example request
