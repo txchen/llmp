@@ -1,0 +1,56 @@
+import { describe, expect, it } from "bun:test";
+import { createProxyHandler } from "../src/proxy";
+import type { Config } from "../src/config";
+
+async function withMockedFetch<T>(
+  mock: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const original = globalThis.fetch;
+  (globalThis as { fetch: typeof fetch }).fetch = mock;
+  try {
+    return await fn();
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = original;
+  }
+}
+
+describe("proxy", () => {
+  it("rejects missing token", async () => {
+    const cfg: Config = {
+      openaiBaseUrl: "https://openai.example",
+      openaiApiKey: "ok",
+      anthropicBaseUrl: "https://anthropic.example",
+      anthropicApiKey: "ak",
+      proxyToken: "pt",
+      port: 33000,
+    };
+    const handler = createProxyHandler(cfg);
+    const res = await handler(new Request("http://proxy/openai/v1/test"));
+    expect(res.status).toBe(401);
+  });
+
+  it("forwards and strips prefix", async () => {
+    const cfg: Config = {
+      openaiBaseUrl: "https://openai.example",
+      openaiApiKey: "ok",
+      anthropicBaseUrl: "https://anthropic.example",
+      anthropicApiKey: "ak",
+      proxyToken: "pt",
+      port: 33000,
+    };
+    const handler = createProxyHandler(cfg);
+    let seenUrl = "";
+    await withMockedFetch(async (input) => {
+      seenUrl = String(input);
+      return new Response("ok", { status: 200 });
+    }, async () => {
+      await handler(
+        new Request("http://proxy/openai/v1/test?x=1", {
+          headers: { Authorization: "Bearer pt" },
+        }),
+      );
+    });
+    expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
+  });
+});
