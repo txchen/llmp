@@ -1,0 +1,4 @@
+.git
+.worktrees
+node_modules
+bun.lockb

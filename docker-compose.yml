@@ -1,0 +1,12 @@
+services:
+  llm-proxy:
+    image: ghcr.io/<owner>/<repo>:latest
+    ports:
+      - "33000:33000"
+    environment:
+      OPENAI_BASE_URL: "https://api.openai.com"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      PROXY_TOKEN: "${PROXY_TOKEN}"
+      PORT: "33000"
