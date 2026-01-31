@@ -60,7 +60,7 @@ curl http://127.0.0.1:33000/anthropic/v1/messages \
   -H "Authorization: Bearer local-token" \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
-  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
 Anthropic messages (SSE stream):
@@ -70,7 +70,7 @@ curl -N http://127.0.0.1:33000/anthropic/v1/messages \
   -H "Authorization: Bearer local-token" \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
-  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"stream"}]}'
+  -d '{"model":"claude-sonnet-4-5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"stream"}]}'
 ```
 
 ## Docker
