@@ -54,3 +54,39 @@ describe("proxy", () => {
     expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
   });
 });
+
+it("streams SSE without buffering", async () => {
+  const cfg: Config = {
+    openaiBaseUrl: "https://openai.example",
+    openaiApiKey: "ok",
+    anthropicBaseUrl: "https://anthropic.example",
+    anthropicApiKey: "ak",
+    proxyToken: "pt",
+    port: 33000,
+  };
+  const handler = createProxyHandler(cfg);
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("data: one\n\n"));
+      controller.enqueue(new TextEncoder().encode("data: two\n\n"));
+      controller.close();
+    },
+  });
+
+  await withMockedFetch(async () => {
+    return new Response(stream, {
+      headers: { "content-type": "text/event-stream" },
+    });
+  }, async () => {
+    const res = await handler(
+      new Request("http://proxy/openai/v1/stream", {
+        headers: { Authorization: "Bearer pt" },
+      }),
+    );
+    const body = await res.text();
+    expect(body).toContain("data: one");
+    expect(body).toContain("data: two");
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+  });
+});
