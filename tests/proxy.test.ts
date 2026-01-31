@@ -53,6 +53,30 @@ describe("proxy", () => {
     });
     expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
   });
+
+  it("preserves base path when forwarding", async () => {
+    const cfg: Config = {
+      openaiBaseUrl: "https://openai.example/openai",
+      openaiApiKey: "ok",
+      anthropicBaseUrl: "https://anthropic.example",
+      anthropicApiKey: "ak",
+      proxyToken: "pt",
+      port: 33000,
+    };
+    const handler = createProxyHandler(cfg);
+    let seenUrl = "";
+    await withMockedFetch(async (input) => {
+      seenUrl = String(input);
+      return new Response("ok", { status: 200 });
+    }, async () => {
+      await handler(
+        new Request("http://proxy/openai/v1/models?x=1", {
+          headers: { Authorization: "Bearer pt" },
+        }),
+      );
+    });
+    expect(seenUrl).toBe("https://openai.example/openai/v1/models?x=1");
+  });
 });
 
 it("streams SSE without buffering", async () => {

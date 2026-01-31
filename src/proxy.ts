@@ -34,6 +34,18 @@ function badGateway(): Response {
   });
 }
 
+function buildUpstreamUrl(base: string, path: string, search: string): URL {
+  const baseUrl = new URL(base);
+  const basePath = baseUrl.pathname.replace(/\/$/, "");
+  const relPath = path.startsWith("/") ? path : `/${path}`;
+  const combinedPath = basePath === "" || basePath === "/" ? relPath : `${basePath}${relPath}`;
+
+  baseUrl.pathname = combinedPath;
+  baseUrl.search = search;
+  baseUrl.hash = "";
+  return baseUrl;
+}
+
 export function createProxyHandler(cfg: Config) {
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -54,7 +66,8 @@ export function createProxyHandler(cfg: Config) {
       return new Response("not found", { status: 404 });
     }
 
-    const upstreamUrl = new URL(url.pathname.slice(prefix.length) + url.search, upstreamBase);
+    const upstreamPath = url.pathname.slice(prefix.length);
+    const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath, url.search);
 
     const extraHeaders: Record<string, string> =
       prefix === "/openai"
