@@ -1,6 +1,6 @@
 services:
   llm-proxy:
-    image: ghcr.io/<owner>/<repo>:latest
+    image: ghcr.io/txchen/llmp:latest
     ports:
       - "33000:33000"
     environment:

@@ -83,5 +83,5 @@ docker run --rm -p 33000:33000 \
   -e ANTHROPIC_API_KEY=... \
   -e PROXY_TOKEN=local-token \
   -e PORT=33000 \
-  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/txchen/llmp:latest
 ```
