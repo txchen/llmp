@@ -10,7 +10,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     anthropicApiKey: "ak",
     proxyToken: "pt",
     port: 33000,
-    idleTimeoutSeconds: 300,
+    idleTimeoutSeconds: 255,
     maxRequestBodySizeBytes: 256 * 1024 * 1024,
     ...overrides,
   };
