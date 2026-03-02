@@ -8,6 +8,30 @@ const HOP_HEADERS = new Set([
   "authorization",
 ]);
 
+type LogLevel = "info" | "warn" | "error";
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function log(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
+  const entry = {
+    ts: new Date().toISOString(),
+    level,
+    event,
+    ...fields,
+  };
+  const line = JSON.stringify(entry);
+  if (level === "error") {
+    console.error(line);
+  } else if (level === "warn") {
+    console.warn(line);
+  } else {
+    console.info(line);
+  }
+}
+
 function filterHeaders(headers: Headers, extra?: Record<string, string>): Headers {
   const out = new Headers();
   for (const [k, v] of headers.entries()) {
@@ -34,6 +58,13 @@ function badGateway(): Response {
   });
 }
 
+function badRequest(): Response {
+  return new Response(JSON.stringify({ error: "invalid_request_url" }), {
+    status: 400,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 function buildUpstreamUrl(base: string, path: string, search: string): URL {
   const baseUrl = new URL(base);
   const basePath = baseUrl.pathname.replace(/\/$/, "");
@@ -48,11 +79,31 @@ function buildUpstreamUrl(base: string, path: string, search: string): URL {
 
 export function createProxyHandler(cfg: Config) {
   return async function handle(req: Request): Promise<Response> {
-    const url = new URL(req.url);
+    const requestId = crypto.randomUUID();
+    let url: URL;
+    try {
+      url = new URL(req.url);
+    } catch (error) {
+      log("warn", "proxy.invalid_request_url", {
+        requestId,
+        method: req.method,
+        rawUrl: req.url,
+        error: toErrorMessage(error),
+      });
+      return badRequest();
+    }
+
     if (url.pathname === "/healthz") return new Response("ok");
 
     const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${cfg.proxyToken}`) return unauthorized();
+    if (auth !== `Bearer ${cfg.proxyToken}`) {
+      log("warn", "proxy.unauthorized", {
+        requestId,
+        method: req.method,
+        path: url.pathname,
+      });
+      return unauthorized();
+    }
 
     let upstreamBase: string | null = null;
     let prefix = "";
@@ -63,11 +114,28 @@ export function createProxyHandler(cfg: Config) {
       upstreamBase = cfg.anthropicBaseUrl;
       prefix = "/anthropic";
     } else {
+      log("warn", "proxy.unsupported_path", {
+        requestId,
+        method: req.method,
+        path: url.pathname,
+      });
       return new Response("not found", { status: 404 });
     }
 
     const upstreamPath = url.pathname.slice(prefix.length);
-    const upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath, url.search);
+    const provider = prefix.slice(1);
+    let upstreamUrl: URL;
+    try {
+      upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath, url.search);
+    } catch (error) {
+      log("error", "proxy.upstream_url_build_failed", {
+        requestId,
+        provider,
+        path: url.pathname,
+        error: toErrorMessage(error),
+      });
+      return badGateway();
+    }
 
     const extraHeaders: Record<string, string> =
       prefix === "/openai"
@@ -78,6 +146,15 @@ export function createProxyHandler(cfg: Config) {
       extraHeaders["anthropic-version"] = cfg.anthropicVersion;
     }
 
+    const forwardStartMs = Date.now();
+    log("info", "proxy.forward_start", {
+      requestId,
+      provider,
+      method: req.method,
+      path: url.pathname,
+      upstreamUrl: upstreamUrl.toString(),
+    });
+
     try {
       const res = await fetch(upstreamUrl, {
         method: req.method,
@@ -86,12 +163,30 @@ export function createProxyHandler(cfg: Config) {
         duplex: "half",
       } as RequestInit);
 
+      log("info", "proxy.forward_success", {
+        requestId,
+        provider,
+        method: req.method,
+        path: url.pathname,
+        status: res.status,
+        durationMs: Date.now() - forwardStartMs,
+      });
+
       const outHeaders = filterHeaders(res.headers);
       return new Response(res.body, {
         status: res.status,
         headers: outHeaders,
       });
-    } catch {
+    } catch (error) {
+      log("error", "proxy.forward_failed", {
+        requestId,
+        provider,
+        method: req.method,
+        path: url.pathname,
+        upstreamUrl: upstreamUrl.toString(),
+        durationMs: Date.now() - forwardStartMs,
+        error: toErrorMessage(error),
+      });
       return badGateway();
     }
   };

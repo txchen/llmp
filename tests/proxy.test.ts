@@ -15,6 +15,19 @@ async function withMockedFetch<T>(
   }
 }
 
+async function withMockedWarn<T>(fn: (logs: string[]) => Promise<T>): Promise<T> {
+  const original = console.warn;
+  const logs: string[] = [];
+  console.warn = ((...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  }) as typeof console.warn;
+  try {
+    return await fn(logs);
+  } finally {
+    console.warn = original;
+  }
+}
+
 describe("proxy", () => {
   it("rejects missing token", async () => {
     const cfg: Config = {
@@ -76,6 +89,57 @@ describe("proxy", () => {
       );
     });
     expect(seenUrl).toBe("https://openai.example/openai/v1/models?x=1");
+  });
+
+  it("logs unsupported path when client URL path is invalid", async () => {
+    const cfg: Config = {
+      openaiBaseUrl: "https://openai.example",
+      openaiApiKey: "ok",
+      anthropicBaseUrl: "https://anthropic.example",
+      anthropicApiKey: "ak",
+      proxyToken: "pt",
+      port: 33000,
+    };
+    const handler = createProxyHandler(cfg);
+
+    await withMockedWarn(async (logs) => {
+      const res = await handler(
+        new Request("http://proxy/invalid-provider/v1/test", {
+          headers: { Authorization: "Bearer pt" },
+        }),
+      );
+
+      expect(res.status).toBe(404);
+      expect(logs.length).toBe(1);
+      const log = JSON.parse(logs[0]) as { event?: string };
+      expect(log.event).toBe("proxy.unsupported_path");
+    });
+  });
+
+  it("logs malformed request URL", async () => {
+    const cfg: Config = {
+      openaiBaseUrl: "https://openai.example",
+      openaiApiKey: "ok",
+      anthropicBaseUrl: "https://anthropic.example",
+      anthropicApiKey: "ak",
+      proxyToken: "pt",
+      port: 33000,
+    };
+    const handler = createProxyHandler(cfg);
+
+    await withMockedWarn(async (logs) => {
+      const res = await handler({
+        url: "%%%not-a-valid-url",
+        method: "GET",
+        headers: new Headers(),
+        body: null,
+      } as unknown as Request);
+
+      expect(res.status).toBe(400);
+      expect(logs.length).toBe(1);
+      const log = JSON.parse(logs[0]) as { event?: string };
+      expect(log.event).toBe("proxy.invalid_request_url");
+    });
   });
 });
 
