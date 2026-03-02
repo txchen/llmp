@@ -44,6 +44,24 @@ describe("loadConfig", () => {
       () => {
         const cfg = loadConfig();
         expect(cfg.port).toBe(33000);
+        expect(cfg.idleTimeoutSeconds).toBe(300);
+        expect(cfg.maxRequestBodySizeBytes).toBe(256 * 1024 * 1024);
+      },
+    );
+  });
+
+  it("throws on invalid numeric env", () => {
+    withEnv(
+      {
+        OPENAI_BASE_URL: "https://openai.example",
+        OPENAI_API_KEY: "ok",
+        ANTHROPIC_BASE_URL: "https://anthropic.example",
+        ANTHROPIC_API_KEY: "ak",
+        PROXY_TOKEN: "pt",
+        PORT: "not-a-number",
+      },
+      () => {
+        expect(() => loadConfig()).toThrow();
       },
     );
   });

@@ -6,6 +6,8 @@ export type Config = {
   proxyToken: string;
   port: number;
   anthropicVersion?: string;
+  idleTimeoutSeconds: number;
+  maxRequestBodySizeBytes: number;
 };
 
 function requireEnv(name: string): string {
@@ -14,14 +16,27 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function numberFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid numeric env: ${name}`);
+  }
+  return parsed;
+}
+
 export function loadConfig(): Config {
+  const maxRequestBodySizeMb = numberFromEnv("MAX_REQUEST_BODY_SIZE_MB", 256);
   return {
     openaiBaseUrl: requireEnv("OPENAI_BASE_URL"),
     openaiApiKey: requireEnv("OPENAI_API_KEY"),
     anthropicBaseUrl: requireEnv("ANTHROPIC_BASE_URL"),
     anthropicApiKey: requireEnv("ANTHROPIC_API_KEY"),
     proxyToken: requireEnv("PROXY_TOKEN"),
-    port: Number(process.env.PORT ?? 33000),
+    port: numberFromEnv("PORT", 33000),
     anthropicVersion: process.env.ANTHROPIC_VERSION,
+    idleTimeoutSeconds: numberFromEnv("IDLE_TIMEOUT_SECONDS", 300),
+    maxRequestBodySizeBytes: maxRequestBodySizeMb * 1024 * 1024,
   };
 }

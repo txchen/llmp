@@ -5,6 +5,8 @@ const config = loadConfig();
 
 Bun.serve({
   port: config.port,
+  idleTimeout: config.idleTimeoutSeconds,
+  maxRequestBodySize: config.maxRequestBodySizeBytes,
   fetch: createProxyHandler(config),
 });
 

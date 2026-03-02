@@ -13,9 +13,13 @@ export ANTHROPIC_BASE_URL=https://api.anthropic.com
 export ANTHROPIC_API_KEY=...
 export PROXY_TOKEN=local-token
 export PORT=33000
+export IDLE_TIMEOUT_SECONDS=300
+export MAX_REQUEST_BODY_SIZE_MB=256
 
 bun run dev
 ```
+
+`IDLE_TIMEOUT_SECONDS` and `MAX_REQUEST_BODY_SIZE_MB` are optional, but increasing them helps with large-context requests that take longer to produce the first token.
 
 ## Example request
 

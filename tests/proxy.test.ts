@@ -2,6 +2,20 @@ import { describe, expect, it } from "bun:test";
 import { createProxyHandler } from "../src/proxy";
 import type { Config } from "../src/config";
 
+function makeConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    openaiBaseUrl: "https://openai.example",
+    openaiApiKey: "ok",
+    anthropicBaseUrl: "https://anthropic.example",
+    anthropicApiKey: "ak",
+    proxyToken: "pt",
+    port: 33000,
+    idleTimeoutSeconds: 300,
+    maxRequestBodySizeBytes: 256 * 1024 * 1024,
+    ...overrides,
+  };
+}
+
 async function withMockedFetch<T>(
   mock: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
   fn: () => Promise<T>,
@@ -30,28 +44,14 @@ async function withMockedWarn<T>(fn: (logs: string[]) => Promise<T>): Promise<T>
 
 describe("proxy", () => {
   it("rejects missing token", async () => {
-    const cfg: Config = {
-      openaiBaseUrl: "https://openai.example",
-      openaiApiKey: "ok",
-      anthropicBaseUrl: "https://anthropic.example",
-      anthropicApiKey: "ak",
-      proxyToken: "pt",
-      port: 33000,
-    };
+    const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
     const res = await handler(new Request("http://proxy/openai/v1/test"));
     expect(res.status).toBe(401);
   });
 
   it("forwards and strips prefix", async () => {
-    const cfg: Config = {
-      openaiBaseUrl: "https://openai.example",
-      openaiApiKey: "ok",
-      anthropicBaseUrl: "https://anthropic.example",
-      anthropicApiKey: "ak",
-      proxyToken: "pt",
-      port: 33000,
-    };
+    const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
     let seenUrl = "";
     await withMockedFetch(async (input) => {
@@ -68,14 +68,7 @@ describe("proxy", () => {
   });
 
   it("preserves base path when forwarding", async () => {
-    const cfg: Config = {
-      openaiBaseUrl: "https://openai.example/openai",
-      openaiApiKey: "ok",
-      anthropicBaseUrl: "https://anthropic.example",
-      anthropicApiKey: "ak",
-      proxyToken: "pt",
-      port: 33000,
-    };
+    const cfg = makeConfig({ openaiBaseUrl: "https://openai.example/openai" });
     const handler = createProxyHandler(cfg);
     let seenUrl = "";
     await withMockedFetch(async (input) => {
@@ -92,14 +85,7 @@ describe("proxy", () => {
   });
 
   it("logs unsupported path when client URL path is invalid", async () => {
-    const cfg: Config = {
-      openaiBaseUrl: "https://openai.example",
-      openaiApiKey: "ok",
-      anthropicBaseUrl: "https://anthropic.example",
-      anthropicApiKey: "ak",
-      proxyToken: "pt",
-      port: 33000,
-    };
+    const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
 
     await withMockedWarn(async (logs) => {
@@ -117,14 +103,7 @@ describe("proxy", () => {
   });
 
   it("logs malformed request URL", async () => {
-    const cfg: Config = {
-      openaiBaseUrl: "https://openai.example",
-      openaiApiKey: "ok",
-      anthropicBaseUrl: "https://anthropic.example",
-      anthropicApiKey: "ak",
-      proxyToken: "pt",
-      port: 33000,
-    };
+    const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
 
     await withMockedWarn(async (logs) => {
@@ -144,14 +123,7 @@ describe("proxy", () => {
 });
 
 it("streams SSE without buffering", async () => {
-  const cfg: Config = {
-    openaiBaseUrl: "https://openai.example",
-    openaiApiKey: "ok",
-    anthropicBaseUrl: "https://anthropic.example",
-    anthropicApiKey: "ak",
-    proxyToken: "pt",
-    port: 33000,
-  };
+  const cfg = makeConfig();
   const handler = createProxyHandler(cfg);
 
   const stream = new ReadableStream({

@@ -152,6 +152,7 @@ export function createProxyHandler(cfg: Config) {
       provider,
       method: req.method,
       path: url.pathname,
+      contentLength: req.headers.get("content-length"),
       upstreamUrl: upstreamUrl.toString(),
     });
 
