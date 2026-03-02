@@ -19,7 +19,9 @@ export MAX_REQUEST_BODY_SIZE_MB=256
 bun run dev
 ```
 
-`IDLE_TIMEOUT_SECONDS` and `MAX_REQUEST_BODY_SIZE_MB` are optional. On Bun 1.1.x, `IDLE_TIMEOUT_SECONDS` cannot exceed `255`.
+`IDLE_TIMEOUT_SECONDS` and `MAX_REQUEST_BODY_SIZE_MB` are optional. On Bun, `IDLE_TIMEOUT_SECONDS` cannot exceed `255`.
+
+The proxy forwards caller `Accept-Encoding` upstream, and strips upstream `Content-Encoding` from downstream responses to avoid compressed-body header mismatches with strict clients.
 
 ## Example request
 

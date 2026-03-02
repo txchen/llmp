@@ -1,11 +1,19 @@
 import type { Config } from "./config";
 
-const HOP_HEADERS = new Set([
+const REQUEST_DROP_HEADERS = new Set([
   "host",
   "content-length",
   "connection",
   "transfer-encoding",
   "authorization",
+]);
+
+const RESPONSE_DROP_HEADERS = new Set([
+  "host",
+  "content-length",
+  "connection",
+  "transfer-encoding",
+  "content-encoding",
 ]);
 
 type LogLevel = "info" | "warn" | "error";
@@ -32,10 +40,14 @@ function log(level: LogLevel, event: string, fields: Record<string, unknown> = {
   }
 }
 
-function filterHeaders(headers: Headers, extra?: Record<string, string>): Headers {
+function filterHeaders(
+  headers: Headers,
+  dropHeaders: Set<string>,
+  extra?: Record<string, string>,
+): Headers {
   const out = new Headers();
   for (const [k, v] of headers.entries()) {
-    if (HOP_HEADERS.has(k.toLowerCase())) continue;
+    if (dropHeaders.has(k.toLowerCase())) continue;
     out.set(k, v);
   }
   if (extra) {
@@ -138,9 +150,7 @@ export function createProxyHandler(cfg: Config) {
     }
 
     const extraHeaders: Record<string, string> =
-      prefix === "/openai"
-        ? { Authorization: `Bearer ${cfg.openaiApiKey}` }
-        : { "x-api-key": cfg.anthropicApiKey };
+      prefix === "/openai" ? { Authorization: `Bearer ${cfg.openaiApiKey}` } : { "x-api-key": cfg.anthropicApiKey };
 
     if (prefix === "/anthropic" && cfg.anthropicVersion && !req.headers.get("anthropic-version")) {
       extraHeaders["anthropic-version"] = cfg.anthropicVersion;
@@ -159,7 +169,7 @@ export function createProxyHandler(cfg: Config) {
     try {
       const res = await fetch(upstreamUrl, {
         method: req.method,
-        headers: filterHeaders(req.headers, extraHeaders),
+        headers: filterHeaders(req.headers, REQUEST_DROP_HEADERS, extraHeaders),
         body: req.body,
         duplex: "half",
       } as RequestInit);
@@ -173,7 +183,7 @@ export function createProxyHandler(cfg: Config) {
         durationMs: Date.now() - forwardStartMs,
       });
 
-      const outHeaders = filterHeaders(res.headers);
+      const outHeaders = filterHeaders(res.headers, RESPONSE_DROP_HEADERS);
       return new Response(res.body, {
         status: res.status,
         headers: outHeaders,

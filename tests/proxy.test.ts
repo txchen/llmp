@@ -67,6 +67,28 @@ describe("proxy", () => {
     expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
   });
 
+  it("passes through client accept-encoding by default", async () => {
+    const cfg = makeConfig();
+    const handler = createProxyHandler(cfg);
+    let seenAcceptEncoding: string | null = null;
+
+    await withMockedFetch(async (_input, init) => {
+      seenAcceptEncoding = new Headers(init?.headers).get("accept-encoding");
+      return new Response("ok", { status: 200 });
+    }, async () => {
+      await handler(
+        new Request("http://proxy/openai/v1/test", {
+          headers: {
+            Authorization: "Bearer pt",
+            "accept-encoding": "br",
+          },
+        }),
+      );
+    });
+
+    expect(seenAcceptEncoding).toBe("br");
+  });
+
   it("preserves base path when forwarding", async () => {
     const cfg = makeConfig({ openaiBaseUrl: "https://openai.example/openai" });
     const handler = createProxyHandler(cfg);
@@ -118,6 +140,30 @@ describe("proxy", () => {
       expect(logs.length).toBe(1);
       const log = JSON.parse(logs[0]) as { event?: string };
       expect(log.event).toBe("proxy.invalid_request_url");
+    });
+  });
+
+  it("drops upstream content-encoding header to keep body/header consistent", async () => {
+    const cfg = makeConfig();
+    const handler = createProxyHandler(cfg);
+
+    await withMockedFetch(async () => {
+      return new Response('{"ok":true}', {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": "br",
+        },
+      });
+    }, async () => {
+      const res = await handler(
+        new Request("http://proxy/openai/v1/responses", {
+          headers: { Authorization: "Bearer pt" },
+        }),
+      );
+
+      expect(res.headers.get("content-encoding")).toBeNull();
+      expect(await res.text()).toBe('{"ok":true}');
     });
   });
 });
