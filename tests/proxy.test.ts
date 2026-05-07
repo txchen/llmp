@@ -21,7 +21,7 @@ async function withMockedFetch<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const original = globalThis.fetch;
-  (globalThis as { fetch: typeof fetch }).fetch = mock;
+  (globalThis as { fetch: typeof fetch }).fetch = mock as unknown as typeof fetch;
   try {
     return await fn();
   } finally {
@@ -67,7 +67,7 @@ describe("proxy", () => {
     expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
   });
 
-  it("passes through client accept-encoding by default", async () => {
+  it("forces upstream identity encoding", async () => {
     const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
     let seenAcceptEncoding: string | null = null;
@@ -86,7 +86,7 @@ describe("proxy", () => {
       );
     });
 
-    expect(seenAcceptEncoding).toBe("br");
+    expect(String(seenAcceptEncoding)).toBe("identity");
   });
 
   it("preserves base path when forwarding", async () => {

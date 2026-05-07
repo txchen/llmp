@@ -6,6 +6,7 @@ const REQUEST_DROP_HEADERS = new Set([
   "connection",
   "transfer-encoding",
   "authorization",
+  "accept-encoding",
 ]);
 
 const RESPONSE_DROP_HEADERS = new Set([
@@ -150,7 +151,9 @@ export function createProxyHandler(cfg: Config) {
     }
 
     const extraHeaders: Record<string, string> =
-      prefix === "/openai" ? { Authorization: `Bearer ${cfg.openaiApiKey}` } : { "x-api-key": cfg.anthropicApiKey };
+      prefix === "/openai"
+        ? { Authorization: `Bearer ${cfg.openaiApiKey}`, "Accept-Encoding": "identity" }
+        : { "x-api-key": cfg.anthropicApiKey, "Accept-Encoding": "identity" };
 
     if (prefix === "/anthropic" && cfg.anthropicVersion && !req.headers.get("anthropic-version")) {
       extraHeaders["anthropic-version"] = cfg.anthropicVersion;
