@@ -1,21 +1,15 @@
 import type { Config } from "./config";
 
-const REQUEST_DROP_HEADERS = new Set([
-  "host",
-  "content-length",
+const HOP_BY_HOP_HEADERS = [
   "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
   "transfer-encoding",
-  "authorization",
-  "accept-encoding",
-]);
-
-const RESPONSE_DROP_HEADERS = new Set([
-  "host",
-  "content-length",
-  "connection",
-  "transfer-encoding",
-  "content-encoding",
-]);
+  "upgrade",
+] as const;
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -41,20 +35,8 @@ function log(level: LogLevel, event: string, fields: Record<string, unknown> = {
   }
 }
 
-function filterHeaders(
-  headers: Headers,
-  dropHeaders: Set<string>,
-  extra?: Record<string, string>,
-): Headers {
-  const out = new Headers();
-  for (const [k, v] of headers.entries()) {
-    if (dropHeaders.has(k.toLowerCase())) continue;
-    out.set(k, v);
-  }
-  if (extra) {
-    for (const [k, v] of Object.entries(extra)) out.set(k, v);
-  }
-  return out;
+function stripHopByHopHeaders(headers: Headers): void {
+  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
 }
 
 function unauthorized(): Response {
@@ -118,13 +100,16 @@ export function createProxyHandler(cfg: Config) {
       return unauthorized();
     }
 
-    let upstreamBase: string | null = null;
-    let prefix = "";
+    let upstreamBase: string;
+    let provider: "openai" | "anthropic";
+    let prefix: "/openai" | "/anthropic";
     if (url.pathname.startsWith("/openai/")) {
       upstreamBase = cfg.openaiBaseUrl;
+      provider = "openai";
       prefix = "/openai";
     } else if (url.pathname.startsWith("/anthropic/")) {
       upstreamBase = cfg.anthropicBaseUrl;
+      provider = "anthropic";
       prefix = "/anthropic";
     } else {
       log("warn", "proxy.unsupported_path", {
@@ -135,11 +120,9 @@ export function createProxyHandler(cfg: Config) {
       return new Response("not found", { status: 404 });
     }
 
-    const upstreamPath = url.pathname.slice(prefix.length);
-    const provider = prefix.slice(1);
     let upstreamUrl: URL;
     try {
-      upstreamUrl = buildUpstreamUrl(upstreamBase, upstreamPath, url.search);
+      upstreamUrl = buildUpstreamUrl(upstreamBase, url.pathname.slice(prefix.length), url.search);
     } catch (error) {
       log("error", "proxy.upstream_url_build_failed", {
         requestId,
@@ -150,52 +133,63 @@ export function createProxyHandler(cfg: Config) {
       return badGateway();
     }
 
-    const extraHeaders: Record<string, string> =
-      prefix === "/openai"
-        ? { Authorization: `Bearer ${cfg.openaiApiKey}`, "Accept-Encoding": "identity" }
-        : { "x-api-key": cfg.anthropicApiKey, "Accept-Encoding": "identity" };
+    const upstreamHeaders = new Headers(req.headers);
+    upstreamHeaders.delete("host");
+    upstreamHeaders.delete("content-length");
+    upstreamHeaders.delete("authorization");
+    stripHopByHopHeaders(upstreamHeaders);
 
-    if (prefix === "/anthropic" && cfg.anthropicVersion && !req.headers.get("anthropic-version")) {
-      extraHeaders["anthropic-version"] = cfg.anthropicVersion;
+    if (provider === "openai") {
+      upstreamHeaders.set("authorization", `Bearer ${cfg.openaiApiKey}`);
+    } else {
+      upstreamHeaders.set("x-api-key", cfg.anthropicApiKey);
+      if (cfg.anthropicVersion && !upstreamHeaders.get("anthropic-version")) {
+        upstreamHeaders.set("anthropic-version", cfg.anthropicVersion);
+      }
     }
 
+    const method = req.method.toUpperCase();
     const forwardStartMs = Date.now();
     log("info", "proxy.forward_start", {
       requestId,
       provider,
-      method: req.method,
+      method,
       path: url.pathname,
       contentLength: req.headers.get("content-length"),
       upstreamUrl: upstreamUrl.toString(),
     });
 
     try {
-      const res = await fetch(upstreamUrl, {
-        method: req.method,
-        headers: filterHeaders(req.headers, REQUEST_DROP_HEADERS, extraHeaders),
-        body: req.body,
-        duplex: "half",
-      } as RequestInit);
+      const upstreamRequest = new Request(upstreamUrl, {
+        method,
+        headers: upstreamHeaders,
+        body: method === "GET" || method === "HEAD" ? undefined : req.body,
+        redirect: "manual",
+      });
+      const res = await fetch(upstreamRequest);
 
       log("info", "proxy.forward_success", {
         requestId,
         provider,
-        method: req.method,
+        method,
         path: url.pathname,
         status: res.status,
         durationMs: Date.now() - forwardStartMs,
       });
 
-      const outHeaders = filterHeaders(res.headers, RESPONSE_DROP_HEADERS);
+      const responseHeaders = new Headers(res.headers);
+      stripHopByHopHeaders(responseHeaders);
+
       return new Response(res.body, {
         status: res.status,
-        headers: outHeaders,
+        statusText: res.statusText,
+        headers: responseHeaders,
       });
     } catch (error) {
       log("error", "proxy.forward_failed", {
         requestId,
         provider,
-        method: req.method,
+        method,
         path: url.pathname,
         upstreamUrl: upstreamUrl.toString(),
         durationMs: Date.now() - forwardStartMs,

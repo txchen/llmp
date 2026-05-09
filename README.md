@@ -21,7 +21,7 @@ bun run dev
 
 `IDLE_TIMEOUT_SECONDS` and `MAX_REQUEST_BODY_SIZE_MB` are optional. On Bun, `IDLE_TIMEOUT_SECONDS` cannot exceed `255`.
 
-The proxy forces upstream `Accept-Encoding: identity`, and strips upstream `Content-Encoding` from downstream responses to avoid compressed-body header mismatches with strict clients.
+The proxy strips hop-by-hop headers, injects provider auth, and streams upstream responses back to the client without buffering.
 
 ## Example request
 

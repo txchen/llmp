@@ -29,6 +29,14 @@ async function withMockedFetch<T>(
   }
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  return input instanceof Request ? input.url : String(input);
+}
+
+function requestHeaders(input: RequestInfo | URL, init?: RequestInit): Headers {
+  return input instanceof Request ? input.headers : new Headers(init?.headers);
+}
+
 async function withMockedWarn<T>(fn: (logs: string[]) => Promise<T>): Promise<T> {
   const original = console.warn;
   const logs: string[] = [];
@@ -55,7 +63,7 @@ describe("proxy", () => {
     const handler = createProxyHandler(cfg);
     let seenUrl = "";
     await withMockedFetch(async (input) => {
-      seenUrl = String(input);
+      seenUrl = requestUrl(input);
       return new Response("ok", { status: 200 });
     }, async () => {
       await handler(
@@ -67,13 +75,13 @@ describe("proxy", () => {
     expect(seenUrl).toBe("https://openai.example/v1/test?x=1");
   });
 
-  it("forces upstream identity encoding", async () => {
+  it("does not rewrite accept-encoding", async () => {
     const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
     let seenAcceptEncoding: string | null = null;
 
-    await withMockedFetch(async (_input, init) => {
-      seenAcceptEncoding = new Headers(init?.headers).get("accept-encoding");
+    await withMockedFetch(async (input, init) => {
+      seenAcceptEncoding = requestHeaders(input, init).get("accept-encoding");
       return new Response("ok", { status: 200 });
     }, async () => {
       await handler(
@@ -86,7 +94,7 @@ describe("proxy", () => {
       );
     });
 
-    expect(String(seenAcceptEncoding)).toBe("identity");
+    expect(seenAcceptEncoding).toBe("br");
   });
 
   it("preserves base path when forwarding", async () => {
@@ -94,7 +102,7 @@ describe("proxy", () => {
     const handler = createProxyHandler(cfg);
     let seenUrl = "";
     await withMockedFetch(async (input) => {
-      seenUrl = String(input);
+      seenUrl = requestUrl(input);
       return new Response("ok", { status: 200 });
     }, async () => {
       await handler(
@@ -143,7 +151,36 @@ describe("proxy", () => {
     });
   });
 
-  it("drops upstream content-encoding header to keep body/header consistent", async () => {
+  it("strips hop-by-hop request headers", async () => {
+    const cfg = makeConfig();
+    const handler = createProxyHandler(cfg);
+    let seenHeaders = new Headers();
+
+    await withMockedFetch(async (input, init) => {
+      seenHeaders = requestHeaders(input, init);
+      return new Response("ok", { status: 200 });
+    }, async () => {
+      await handler(
+        new Request("http://proxy/openai/v1/responses", {
+          headers: {
+            Authorization: "Bearer pt",
+            Connection: "keep-alive",
+            "Keep-Alive": "timeout=5",
+            TE: "trailers",
+            Upgrade: "websocket",
+          },
+        }),
+      );
+    });
+
+    expect(seenHeaders.get("connection")).toBeNull();
+    expect(seenHeaders.get("keep-alive")).toBeNull();
+    expect(seenHeaders.get("te")).toBeNull();
+    expect(seenHeaders.get("upgrade")).toBeNull();
+    expect(seenHeaders.get("authorization")).toBe("Bearer ok");
+  });
+
+  it("strips hop-by-hop response headers", async () => {
     const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
 
@@ -152,6 +189,9 @@ describe("proxy", () => {
         status: 200,
         headers: {
           "content-type": "application/json",
+          connection: "keep-alive",
+          "keep-alive": "timeout=5",
+          "transfer-encoding": "chunked",
           "content-encoding": "br",
         },
       });
@@ -162,7 +202,10 @@ describe("proxy", () => {
         }),
       );
 
-      expect(res.headers.get("content-encoding")).toBeNull();
+      expect(res.headers.get("connection")).toBeNull();
+      expect(res.headers.get("keep-alive")).toBeNull();
+      expect(res.headers.get("transfer-encoding")).toBeNull();
+      expect(res.headers.get("content-encoding")).toBe("br");
       expect(await res.text()).toBe('{"ok":true}');
     });
   });
