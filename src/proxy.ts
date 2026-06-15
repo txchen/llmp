@@ -36,7 +36,22 @@ function log(level: LogLevel, event: string, fields: Record<string, unknown> = {
 }
 
 function stripHopByHopHeaders(headers: Headers): void {
+  const connection = headers.get("connection");
+  if (connection) {
+    for (const name of connection.split(",")) {
+      const trimmed = name.trim();
+      if (trimmed) headers.delete(trimmed);
+    }
+  }
+
   for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+}
+
+function stripDecodedBodyHeaders(headers: Headers): void {
+  if (!headers.has("content-encoding")) return;
+
+  headers.delete("content-encoding");
+  headers.delete("content-length");
 }
 
 function unauthorized(): Response {
@@ -179,6 +194,7 @@ export function createProxyHandler(cfg: Config) {
 
       const responseHeaders = new Headers(res.headers);
       stripHopByHopHeaders(responseHeaders);
+      stripDecodedBodyHeaders(responseHeaders);
 
       return new Response(res.body, {
         status: res.status,

@@ -78,7 +78,7 @@ describe("proxy", () => {
   it("does not rewrite accept-encoding", async () => {
     const cfg = makeConfig();
     const handler = createProxyHandler(cfg);
-    let seenAcceptEncoding: string | null = null;
+    let seenAcceptEncoding: string | null | undefined;
 
     await withMockedFetch(async (input, init) => {
       seenAcceptEncoding = requestHeaders(input, init).get("accept-encoding");
@@ -164,10 +164,11 @@ describe("proxy", () => {
         new Request("http://proxy/openai/v1/responses", {
           headers: {
             Authorization: "Bearer pt",
-            Connection: "keep-alive",
+            Connection: "keep-alive, x-trace-id",
             "Keep-Alive": "timeout=5",
             TE: "trailers",
             Upgrade: "websocket",
+            "X-Trace-Id": "request-hop",
           },
         }),
       );
@@ -177,6 +178,7 @@ describe("proxy", () => {
     expect(seenHeaders.get("keep-alive")).toBeNull();
     expect(seenHeaders.get("te")).toBeNull();
     expect(seenHeaders.get("upgrade")).toBeNull();
+    expect(seenHeaders.get("x-trace-id")).toBeNull();
     expect(seenHeaders.get("authorization")).toBe("Bearer ok");
   });
 
@@ -189,10 +191,10 @@ describe("proxy", () => {
         status: 200,
         headers: {
           "content-type": "application/json",
-          connection: "keep-alive",
+          connection: "keep-alive, x-response-hop",
           "keep-alive": "timeout=5",
           "transfer-encoding": "chunked",
-          "content-encoding": "br",
+          "x-response-hop": "response-hop",
         },
       });
     }, async () => {
@@ -205,8 +207,34 @@ describe("proxy", () => {
       expect(res.headers.get("connection")).toBeNull();
       expect(res.headers.get("keep-alive")).toBeNull();
       expect(res.headers.get("transfer-encoding")).toBeNull();
-      expect(res.headers.get("content-encoding")).toBe("br");
+      expect(res.headers.get("x-response-hop")).toBeNull();
       expect(await res.text()).toBe('{"ok":true}');
+    });
+  });
+
+  it("strips stale decoded-body response headers", async () => {
+    const cfg = makeConfig();
+    const handler = createProxyHandler(cfg);
+
+    await withMockedFetch(async () => {
+      return new Response("decoded", {
+        status: 200,
+        headers: {
+          "content-type": "text/plain",
+          "content-encoding": "gzip",
+          "content-length": "32",
+        },
+      });
+    }, async () => {
+      const res = await handler(
+        new Request("http://proxy/openai/v1/responses", {
+          headers: { Authorization: "Bearer pt" },
+        }),
+      );
+
+      expect(res.headers.get("content-encoding")).toBeNull();
+      expect(res.headers.get("content-length")).toBeNull();
+      expect(await res.text()).toBe("decoded");
     });
   });
 });
