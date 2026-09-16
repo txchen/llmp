@@ -3,10 +3,13 @@
   "module": "src/server.ts",
   "type": "module",
   "private": true,
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "bun run src/server.ts",
     "start": "bun run src/server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "check": "tsc --noEmit",
+    "build": "bun build src/server.ts --compile --outfile dist/llmp"
   },
   "devDependencies": {
     "@types/bun": "latest"

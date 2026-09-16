@@ -1,13 +1,21 @@
 import { loadConfig } from "./config";
-import { createProxyHandler } from "./proxy";
+import { createApp } from "./app";
 
 const config = loadConfig();
+const app = createApp(config);
 
-Bun.serve({
+const server = Bun.serve({
   port: config.port,
   idleTimeout: config.idleTimeoutSeconds,
   maxRequestBodySize: config.maxRequestBodySizeBytes,
-  fetch: createProxyHandler(config),
+  fetch: (req, server) => app.fetch(req, server.requestIP(req)?.address),
 });
 
 console.log(`llm-proxy listening on ${config.port}`);
+console.log(`Admin: http://localhost:${config.port}/admin`);
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    app.close();
+    void server.stop(true);
+  });
+}

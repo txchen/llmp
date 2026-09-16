@@ -3,7 +3,11 @@ export type Config = {
   openaiApiKey: string;
   anthropicBaseUrl: string;
   anthropicApiKey: string;
-  proxyToken: string;
+  proxyToken?: string;
+  adminPassword?: string;
+  adminOrigin?: string;
+  databasePath?: string;
+  timezone?: string;
   port: number;
   anthropicVersion?: string;
   idleTimeoutSeconds: number;
@@ -39,11 +43,16 @@ export function loadConfig(): Config {
   }
 
   return {
-    openaiBaseUrl: requireEnv("OPENAI_BASE_URL"),
-    openaiApiKey: requireEnv("OPENAI_API_KEY"),
-    anthropicBaseUrl: requireEnv("ANTHROPIC_BASE_URL"),
-    anthropicApiKey: requireEnv("ANTHROPIC_API_KEY"),
-    proxyToken: requireEnv("PROXY_TOKEN"),
+    // Old environments are imported only when settings are first initialized.
+    openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com",
+    openaiApiKey: process.env.OPENAI_API_KEY || "",
+    anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+    proxyToken: process.env.PROXY_TOKEN || undefined,
+    adminPassword: requireEnv("ADMIN_PASSWORD"),
+    adminOrigin: process.env.ADMIN_ORIGIN,
+    databasePath: process.env.DATABASE_PATH || "./data/llmp.sqlite",
+    timezone: process.env.TIMEZONE || Intl.DateTimeFormat().resolvedOptions().timeZone,
     port: numberFromEnv("PORT", 33000),
     anthropicVersion: process.env.ANTHROPIC_VERSION,
     idleTimeoutSeconds,
