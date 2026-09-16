@@ -14,7 +14,7 @@ export function createApp(config: Config) {
   });
   const access = new Access(store);
   const admin = createAdminHandler(access, config.adminPassword, config.adminOrigin);
-  const proxy = createProxyHandler(config, access);
+  const proxy = createProxyHandler(access);
   let closed = false;
   return {
     store, access,

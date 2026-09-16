@@ -1,4 +1,3 @@
-import type { Config } from "./config";
 import type { Access } from "./access";
 import { UsageObserver } from "./usage";
 
@@ -89,7 +88,32 @@ function buildUpstreamUrl(base: string, path: string, search: string): URL {
   return baseUrl;
 }
 
-export function createProxyHandler(cfg: Config, access?: Access) {
+// Cancel the reader rather than only aborting the later upstream fetch. Cancellation
+// settles pending reads even if the sender never finishes uploading its JSON body.
+async function readRequestBody(body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<Buffer<ArrayBuffer>> {
+  if (!body) { signal.throwIfAborted(); return Buffer.alloc(0); }
+  const reader = body.getReader();
+  const onAbort = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    if (signal.aborted) onAbort();
+    signal.throwIfAborted();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) return Buffer.concat(chunks, length);
+      chunks.push(value);
+      length += value.length;
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+}
+
+export function createProxyHandler(access: Access) {
   return async function handle(req: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
     let url: URL;
@@ -108,8 +132,8 @@ export function createProxyHandler(cfg: Config, access?: Access) {
     if (url.pathname === "/healthz") return new Response("ok");
 
     const auth = req.headers.get("authorization");
-    const key = access && auth?.startsWith("Bearer ") ? access.store.authenticate(auth.slice(7)) : null;
-    if (access ? !key || key.state === "revoked" : !cfg.proxyToken || auth !== `Bearer ${cfg.proxyToken}`) {
+    const key = auth?.startsWith("Bearer ") ? access.store.authenticate(auth.slice(7)) : null;
+    if (!key || key.state === "revoked") {
       log("warn", "proxy.unauthorized", {
         requestId,
         method: req.method,
@@ -118,11 +142,11 @@ export function createProxyHandler(cfg: Config, access?: Access) {
       return unauthorized();
     }
 
-    if (access && key && !access.store.allowed(key)) {
+    if (!access.store.allowed(key)) {
       return Response.json({ error: "key_paused" }, { status: 403 });
     }
 
-    const settings = access?.store.getSettings() ?? cfg;
+    const settings = access.store.getSettings();
     let upstreamBase: string;
     let provider: "openai" | "anthropic";
     let prefix: "/openai" | "/anthropic";
@@ -187,8 +211,8 @@ export function createProxyHandler(cfg: Config, access?: Access) {
       upstreamUrl: upstreamUrl.toString(),
     });
 
-    const lease = access && key ? access.enroll(key.id) : undefined;
-    const controller = lease?.controller ?? new AbortController();
+    const lease = access.enroll(key.id);
+    const controller = lease.controller;
     const clientAbort = () => controller.abort(new Error("client_disconnected"));
     req.signal.addEventListener("abort", clientAbort, { once: true });
     if (req.signal.aborted) clientAbort();
@@ -198,8 +222,8 @@ export function createProxyHandler(cfg: Config, access?: Access) {
     const finish = (outcome: string) => {
       if (finished) return;
       finished = true;
-      if (recorded) access!.store.finishRequest(requestId, observer?.usage ?? null, outcome);
-      lease?.release();
+      if (recorded) access.store.finishRequest(requestId, observer?.usage ?? null, outcome);
+      lease.release();
       req.signal.removeEventListener("abort", clientAbort);
       controller.signal.removeEventListener("abort", onAbort);
     };
@@ -210,11 +234,14 @@ export function createProxyHandler(cfg: Config, access?: Access) {
       let body: BodyInit | null | undefined = method === "GET" || method === "HEAD" ? undefined : req.body;
       let model = "unknown";
       const measured = method === "POST" && /\/(chat\/completions|completions|responses|messages|embeddings)\/?$/.test(url.pathname);
-      if (access && measured && req.headers.get("content-type")?.includes("application/json")) {
-        const raw = await req.text();
+      // Compressed bodies stay opaque: preserve their bytes and Content-Encoding.
+      const encoding = req.headers.get("content-encoding")?.trim().toLowerCase();
+      const plainJson = (!encoding || encoding === "identity") && req.headers.get("content-type")?.includes("application/json");
+      if (measured && plainJson) {
+        const raw = await readRequestBody(req.body, controller.signal);
         body = raw;
         try {
-          const payload = JSON.parse(raw);
+          const payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
           if (typeof payload.model === "string") model = payload.model;
           if (provider === "openai" && /\/(chat\/completions|completions)\/?$/.test(url.pathname) && payload.stream === true) {
             payload.stream_options = { ...payload.stream_options, include_usage: true };
@@ -222,17 +249,15 @@ export function createProxyHandler(cfg: Config, access?: Access) {
           }
         } catch { /* Let the provider validate malformed JSON. */ }
       }
-      if (access && key && !access.store.allowed(access.store.getKey(key.id)!)) controller.abort(new Error("key_disabled"));
+      if (!access.store.allowed(access.store.getKey(key.id)!)) controller.abort(new Error("key_disabled"));
       if (controller.signal.aborted) {
         finish("interrupted");
         return Response.json({ error: "request_cancelled" }, { status: 403 });
       }
-      if (access && key) {
-        access.store.touch(key.id);
-        if (measured) {
-          access.store.startRequest(requestId, key.id, provider, model, forwardStartMs);
-          recorded = true;
-        }
+      access.store.touch(key.id);
+      if (measured) {
+        access.store.startRequest(requestId, key.id, provider, model, forwardStartMs);
+        recorded = true;
       }
       const upstreamRequest = new Request(upstreamUrl, {
         method,

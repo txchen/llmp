@@ -62,6 +62,8 @@ Reporting dates use the timezone selected in Settings (initially the server time
 
 Usage is parsed from OpenAI Responses, Chat Completions, Completions, Embeddings, and Anthropic Messages, including SSE streams. Chat/Completions streaming requests get `stream_options.include_usage=true`. OpenAI cached input is already included in its input count; Anthropic cache-read and cache-creation counts are added to input. Prompt and response content is never stored.
 
+Compressed request bodies are forwarded unchanged, so the proxy does not inject streaming usage options into them. Such clients must request usage themselves when the provider requires it. Response usage is still recorded; if neither request inspection nor the response supplies a model name, it is reported as `unknown`.
+
 Only complete provider-reported usage is included in totals. Requests interrupted or returned without complete usage are counted as **Unknown usage**, not known zero consumption. Parsing is bounded to 8 MiB per SSE event or non-stream JSON response. Other endpoints remain proxied and access-controlled but are not included in the usage report. Statistics are not a provider billing reconciliation.
 
 Storage behavior:

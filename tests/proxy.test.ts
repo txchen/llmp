@@ -1,19 +1,23 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { createProxyHandler } from "../src/proxy";
-import type { Config } from "../src/config";
+import { Store, type Settings } from "../src/store";
+import { Access } from "../src/access";
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    openaiBaseUrl: "https://openai.example",
-    openaiApiKey: "ok",
-    anthropicBaseUrl: "https://anthropic.example",
-    anthropicApiKey: "ak",
-    proxyToken: "pt",
-    port: 33000,
-    idleTimeoutSeconds: 255,
-    maxRequestBodySizeBytes: 256 * 1024 * 1024,
+const fixtures: { store: Store; access: Access }[] = [];
+afterEach(() => {
+  for (const { store, access } of fixtures) { access.close(); store.close(); }
+  fixtures.length = 0;
+});
+
+function makeProxy(overrides: Partial<Settings> = {}) {
+  const store = new Store(":memory:", "UTC", "pt", {
+    openaiBaseUrl: "https://openai.example", openaiApiKey: "ok",
+    anthropicBaseUrl: "https://anthropic.example", anthropicApiKey: "ak",
     ...overrides,
-  };
+  });
+  const access = new Access(store);
+  fixtures.push({ store, access });
+  return { handler: createProxyHandler(access), store, access, key: store.authenticate("pt")! };
 }
 
 async function withMockedFetch<T>(
@@ -52,15 +56,13 @@ async function withMockedWarn<T>(fn: (logs: string[]) => Promise<T>): Promise<T>
 
 describe("proxy", () => {
   it("rejects missing token", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
     const res = await handler(new Request("http://proxy/openai/v1/test"));
     expect(res.status).toBe(401);
   });
 
   it("forwards and strips prefix", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
     let seenUrl = "";
     await withMockedFetch(async (input) => {
       seenUrl = requestUrl(input);
@@ -76,8 +78,7 @@ describe("proxy", () => {
   });
 
   it("does not rewrite accept-encoding", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
     let seenAcceptEncoding: string | null | undefined;
 
     await withMockedFetch(async (input, init) => {
@@ -98,8 +99,7 @@ describe("proxy", () => {
   });
 
   it("preserves base path when forwarding", async () => {
-    const cfg = makeConfig({ openaiBaseUrl: "https://openai.example/openai" });
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy({ openaiBaseUrl: "https://openai.example/openai" });
     let seenUrl = "";
     await withMockedFetch(async (input) => {
       seenUrl = requestUrl(input);
@@ -115,8 +115,7 @@ describe("proxy", () => {
   });
 
   it("logs unsupported path when client URL path is invalid", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
 
     await withMockedWarn(async (logs) => {
       const res = await handler(
@@ -133,8 +132,7 @@ describe("proxy", () => {
   });
 
   it("logs malformed request URL", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
 
     await withMockedWarn(async (logs) => {
       const res = await handler({
@@ -152,8 +150,7 @@ describe("proxy", () => {
   });
 
   it("strips hop-by-hop request headers", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
     let seenHeaders = new Headers();
 
     await withMockedFetch(async (input, init) => {
@@ -183,8 +180,7 @@ describe("proxy", () => {
   });
 
   it("strips hop-by-hop response headers", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
 
     await withMockedFetch(async () => {
       return new Response('{"ok":true}', {
@@ -213,8 +209,7 @@ describe("proxy", () => {
   });
 
   it("strips stale decoded-body response headers", async () => {
-    const cfg = makeConfig();
-    const handler = createProxyHandler(cfg);
+    const { handler } = makeProxy();
 
     await withMockedFetch(async () => {
       return new Response("decoded", {
@@ -240,8 +235,7 @@ describe("proxy", () => {
 });
 
 it("streams SSE without buffering", async () => {
-  const cfg = makeConfig();
-  const handler = createProxyHandler(cfg);
+  const { handler } = makeProxy();
 
   const stream = new ReadableStream({
     start(controller) {
@@ -265,5 +259,92 @@ it("streams SSE without buffering", async () => {
     expect(body).toContain("data: one");
     expect(body).toContain("data: two");
     expect(res.headers.get("content-type")).toContain("text/event-stream");
+  });
+});
+
+async function within<T>(promise: Promise<T>, milliseconds = 1000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Request did not settle after cancellation")), milliseconds); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+describe("request body handling", () => {
+  it("preserves compressed JSON bytes and encoding while recording response usage", async () => {
+    const { handler, store } = makeProxy();
+    const raw = Bun.gzipSync(new TextEncoder().encode(JSON.stringify({ model: "requested", stream: true, messages: [{ role: "user", content: "Hello" }] })));
+    let seenBytes: Uint8Array | undefined;
+    let seenEncoding = "";
+    await withMockedFetch(async (input) => {
+      const req = input as Request;
+      seenBytes = new Uint8Array(await req.arrayBuffer());
+      seenEncoding = req.headers.get("content-encoding") ?? "";
+      return Response.json({ model: "actual", usage: { prompt_tokens: 12, completion_tokens: 4 } });
+    }, async () => {
+      const response = await handler(new Request("http://proxy/openai/v1/chat/completions", {
+        method: "POST", headers: { authorization: "Bearer pt", "content-type": "application/json", "content-encoding": "gzip" }, body: raw,
+      }));
+      expect(response.status).toBe(200);
+      await response.text();
+    });
+    expect(seenEncoding).toBe("gzip");
+    expect(seenBytes).toEqual(new Uint8Array(raw));
+    expect(store.stats(store.day(), store.day())[0]).toMatchObject({ model: "actual", input_tokens: 12, output_tokens: 4, unknown: 0 });
+  });
+
+  it("leaves invalid UTF-8 JSON untouched for upstream validation", async () => {
+    const { handler } = makeProxy();
+    const raw = new Uint8Array([123, 34, 120, 34, 58, 34, 255, 34, 125]);
+    await withMockedFetch(async (input) => {
+      expect(new Uint8Array(await (input as Request).arrayBuffer())).toEqual(raw);
+      return Response.json({ error: "invalid_json" }, { status: 400 });
+    }, async () => {
+      const response = await handler(new Request("http://proxy/openai/v1/responses", {
+        method: "POST", headers: { authorization: "Bearer pt", "content-type": "application/json" }, body: raw,
+      }));
+      expect(response.status).toBe(400); await response.text();
+    });
+  });
+
+  for (const reason of ["pause", "revoke", "expiry", "disconnect", "shutdown"] as const) {
+    it(`interrupts stalled JSON uploads on ${reason}`, async () => {
+      const { handler, store, access, key } = makeProxy();
+      let canceled = false, forwarded = false;
+      const client = new AbortController();
+      const body = new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(new TextEncoder().encode('{"model":')); },
+        cancel() {
+          canceled = true;
+          // A slow source cleanup must not delay cancellation of the request.
+          return new Promise<void>(() => {});
+        },
+      });
+      await withMockedFetch(async () => { forwarded = true; throw new Error("Paused upload must never reach upstream"); }, async () => {
+        const pending = handler(new Request("http://proxy/openai/v1/responses", {
+          method: "POST", signal: client.signal, headers: { authorization: "Bearer pt", "content-type": "application/json" }, body,
+        }));
+        if (reason === "pause" || reason === "revoke") {
+          store.updateKey(key.id, { state: reason === "pause" ? "paused" : "revoked" }); access.changed();
+        } else if (reason === "expiry") {
+          store.updateKey(key.id, { state: "open", expiresAt: Date.now() + 30 }); access.changed();
+        } else if (reason === "disconnect") client.abort();
+        else access.close();
+        expect((await within(pending)).status).toBe(403);
+      });
+      expect(canceled).toBe(true);
+      expect(forwarded).toBe(false);
+      expect(store.stats(store.day(), store.day())).toEqual([]);
+    });
+  }
+
+  it("treats imported legacy tokens as managed keys without an authentication bypass", async () => {
+    const { handler, store, key } = makeProxy();
+    store.updateKey(key.id, { state: "paused" });
+    expect((await handler(new Request("http://proxy/openai/v1/models", { headers: { authorization: "Bearer pt" } }))).status).toBe(403);
+    store.updateKey(key.id, { state: "revoked" });
+    expect((await handler(new Request("http://proxy/openai/v1/models", { headers: { authorization: "Bearer pt" } }))).status).toBe(401);
   });
 });
