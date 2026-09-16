@@ -36,13 +36,49 @@ docker run --rm -p 33000:33000 \
   ghcr.io/txchen/llmp:latest
 ```
 
-Or use the included Compose file:
+### Docker Compose
 
-```bash
-ADMIN_PASSWORD='your-private-admin-password' docker compose up -d
+Save the following as `docker-compose.yml` (the repository includes the same configuration):
+
+```yaml
+services:
+  llm-proxy:
+    image: ghcr.io/txchen/llmp:latest
+    ports:
+      - "33000:33000"
+    environment:
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}"
+    volumes:
+      - llmp-data:/app/data
+
+volumes:
+  llmp-data:
 ```
 
-Only the admin password is passed as application configuration. The volume retains settings, member keys, and usage across container replacement. Upgrading the source requires rebuilding the image before these changes are available in Docker.
+Create a `.env` file next to it:
+
+```dotenv
+ADMIN_PASSWORD=replace-with-your-private-admin-password
+```
+
+Start the service:
+
+```bash
+docker compose up -d
+```
+
+Open `http://localhost:33000/admin` (or use the server's LAN address), sign in, and configure upstream URLs and API keys in **Settings**. Create member keys in the same UI. No upstream credentials are needed in Compose.
+
+The named volume retains settings, member keys, and usage across container replacement. To update the image while keeping that data:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Use `docker compose down` to stop and remove the container while keeping the volume. Adding `--volumes` deletes the stored configuration and usage.
+
+Images support `linux/amd64` and `linux/arm64`. To pin this release, change the image to `ghcr.io/txchen/llmp:v0.1.0`; update that tag explicitly when upgrading to another release. The `latest` tag follows the newest published build.
 
 ## Manage access
 
