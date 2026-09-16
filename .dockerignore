@@ -2,3 +2,9 @@
 .worktrees
 node_modules
 bun.lockb
+dist
+data
+.env
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
